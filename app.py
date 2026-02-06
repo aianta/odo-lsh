@@ -3,11 +3,13 @@ from datasketch import MinHash, MinHashLSH
 import networkx as nx
 from networkx.readwrite import json_graph
 import uuid
+import requests
 
 app = Flask(__name__)
 
 # Simple in-memory store for stubbed endpoints
 lsh_store = {}
+HOST_IP = "172.29.64.1"
 
 
 @app.route('/minhashLSH', methods=['POST'])
@@ -54,6 +56,9 @@ def update_lsh(lsh_id):
     for index,graph in enumerate(data):
         graph_id = graph['id'] or 'No ID'
 
+        for node in graph['nodes']: # deal with any odd characters like \xa0 in the color labels.
+            node['color'] = node['color'].encode('utf-8')
+
         print(f"Computing wl-shingles for graph {graph_id}")
         # Load node-links JSON data into graph.
         G = nx.node_link_graph(graph, edges="links", directed=True, multigraph=False)
@@ -83,7 +88,7 @@ def update_lsh(lsh_id):
     
     
     # Retrieve the specified LSH
-    lsh = lsh_store[lsh_id]
+    lsh = lsh_store[lsh_id]['lsh']
     for entry in minhashes:
         lsh.insert(entry[0], entry[1])    
 
@@ -92,16 +97,53 @@ def update_lsh(lsh_id):
     return jsonify({'id': lsh_id, 'message': f"Inserted {len(minhashes)} minhashes into minhashLSH {lsh_id}"}), 200
 
 
-@app.route('/minhash/<lsh_id>/query', methods=['POST'])
+@app.route('/minhashLSH/<lsh_id>/query', methods=['POST'])
 def query_minhash(lsh_id):
     """Run a query against a MinHash index (stub).
     Accepts JSON query payload and returns placeholder results.
     """
     if lsh_id not in lsh_store:
         abort(404, description='LSH not found')
-    query = request.get_json() or {}
-    # TODO: implement actual query logic
-    return jsonify({'id': lsh_id, 'query': query, 'results': [], 'message': 'Query endpoint stub'}), 200
+    
+    wl_iterations = request.args.get('wl_iterations') or 16
+    wl_digest_size = request.args.get('wl_digest_size') or 16
+    minhash_perm = request.args.get('minhash_perm') or 256
+
+    try:
+        html = request.data
+        headers = {"Content-Type":"text/html"}
+        response = requests.post(f'http://{HOST_IP}:8055/api/nodeLinks', headers=headers, data=html)
+
+        response = response.json()
+
+        for node in response['nodes']: # deal with any odd characters like \xa0 
+            node['color'] = node['color'].encode('utf-8')
+        
+        # Load node links into graph
+        G = nx.node_link_graph(response, edges="links", directed=True, multigraph=False)
+
+        # Compute WL-Shingles for the graph
+        wl_shingles = nx.weisfeiler_lehman_subgraph_hashes(G, iterations=wl_iterations, digest_size=wl_digest_size, node_attr="color", include_initial_labels=True)
+
+        graph_document = []
+        for node_hashes in wl_shingles:
+            graph_document.append("".join(wl_shingles[node_hashes]))
+
+        minhash = MinHash(num_perm=minhash_perm)
+        for shingle in graph_document:
+            minhash.update(shingle.encode('utf-8'))
+        
+        lsh = lsh_store[lsh_id]['lsh']
+        result = lsh.query(minhash)
+
+        print(result)
+
+        # TODO: implement actual query logic
+        return "lol"
+        #return jsonify({'id': lsh_id, 'query': query, 'results': [], 'message': 'Query endpoint stub'}), 200
+    except Exception as e:
+        print(e)
+
 
 
 @app.route('/minhashLSH/<lsh_id>/clustering', methods=['GET'])
@@ -114,4 +156,7 @@ def clustering(lsh_id):
 
 
 if __name__ == '__main__':
+
     app.run(debug=True, host='0.0.0.0', port=5000)
+
+
