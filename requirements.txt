@@ -1,4 +1,6 @@
 Flask>=2.0
-datasketch=1.9.0
-networkx=3.6.1
-requests=2.32.5
+datasketch==1.9.0
+networkx==3.6.1
+requests==2.32.5
+numpy==2.4.2
+scikit-learn==1.8.0
