@@ -56,7 +56,7 @@ def update_lsh(lsh_id):
     data = request.get_json() or {}
     # Merge/update config (stub behavior)
 
-    print(data)
+    #print(data)
 
     wl_iterations = request.args.get('wl_iterations') or 16
     wl_digest_size = request.args.get('wl_digest_size') or 16
@@ -82,34 +82,20 @@ def update_lsh(lsh_id):
         # Compute WL-Shingles for the graph
         wl_shingles = nx.weisfeiler_lehman_subgraph_hashes(G, iterations=wl_iterations, digest_size=wl_digest_size, node_attr="color", include_initial_labels=True)
 
-        print(f"Concatenating hashes into shingles...")
-        '''
-        Compute a document representing this graph as a set of WL-shingles. A document is a set of hashes representing the graph.
-        wl_shingles contains hashes for each node in G. We treat each hash like a 'character', thus to produce the hashes for the graph we concatinate the hashes for each node.
-        '''
-        graph_document = []
-        for node_hashes in wl_shingles:
-            graph_document.append("".join(wl_shingles[node_hashes])) 
-
-        # Save the shingles for this graph
         shingle_store = lsh_store[lsh_id]['shingles']
-        shingle_store.append((graph_id, graph_document))
 
-        print(f"Computing minhash signature for graph {graph_id}")
-        # Finally, finally compute the minhash signature for this graph
-        minhash = MinHash(num_perm=minhash_perm)
-        for shingle in graph_document:
-            minhash.update(shingle.encode('utf-8'))
+        for i,node in enumerate(wl_shingles):
+            minhash = MinHash(num_perm=minhash_perm)
+            for shingle in wl_shingles[node]:
+                minhash.update(shingle.encode('utf-8'))
+            
+            # Append the computed minhash to a list of minhashes which we're looking to insert into the specified minhashLSH.
+            minhashes.append((graph_id + "_" + str(i), minhash, node))
+            shingle_store.append((graph_id + "_" + str(i), wl_shingles[node]))
 
-        print(f"Minhash Digest for {graph_id}:\n{minhash.digest()}")
-
-        # Append the computed minhash to a list of minhashes which we're looking to insert into the specified minhashLSH.
-        minhashes.append((graph_id, minhash))
-    
     
     # Retrieve the specified LSH
     lsh = lsh_store[lsh_id]['lsh']
-    hyperloglog = lsh_store[lsh_id]['hyperloglog']
     minhash_store = lsh_store[lsh_id]['minhashes']
     for entry in minhashes:
         lsh.insert(entry[0], entry[1])
@@ -191,8 +177,6 @@ def clustering(lsh_id):
     for entry in document_similarity:
         edges.extend(list(itertools.combinations(entry, 2)))
 
-    print(edges)
-
     G = nx.Graph()
     G.add_edges_from(edges)
 
@@ -206,7 +190,7 @@ def clustering(lsh_id):
     for cluster in clusters:
         items = []
         for item in cluster:
-            items.append(graph_uri_map[item])
+            items.append(item)
         uri_clusters.append(items)
 
     approx_num_clusters = len(uri_clusters)
@@ -272,19 +256,17 @@ def clustering(lsh_id):
             cluster_mapping[cluster_id] = []
 
         document_id = document_list[idx][0]
-        base_uri = graph_uri_map[document_id]
-        cluster_mapping[cluster_id].append({
-            'id': document_id,
-            'base_uri': base_uri
-        })
+        cluster_mapping[cluster_id].append(document_id)
 
     hyperloglog = lsh_store[lsh_id]['hyperloglog']
+
+    minhash_store = lsh_store[lsh_id]['minhashes']
 
     return jsonify({
         'lsh': lsh_store[lsh_id]['config'],
         'num_clusters': len(np.unique(clusters)),
-        'hyperloglog_cardinality': hyperloglog.count(),
         'approx_num_clusters': approx_num_clusters,
+        'num_nodes': len(minhash_store),
         'clusters': cluster_mapping}),200
     #return jsonify({'id': lsh_id, 'clusters': lsh_store[lsh_id].get('clusters', {}), 'message': 'Clustering stub'}), 200
 
