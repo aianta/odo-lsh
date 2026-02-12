@@ -82,6 +82,9 @@ def update_lsh(lsh_id):
         # Compute WL-Shingles for the graph
         wl_shingles = nx.weisfeiler_lehman_subgraph_hashes(G, iterations=wl_iterations, digest_size=wl_digest_size, node_attr="color", include_initial_labels=True)
 
+        print("G nodes:")
+        print(list(G.nodes(data=True)))
+
         shingle_store = lsh_store[lsh_id]['shingles']
 
         for i,node in enumerate(wl_shingles):
@@ -89,9 +92,20 @@ def update_lsh(lsh_id):
             for shingle in wl_shingles[node]:
                 minhash.update(shingle.encode('utf-8'))
             
+            # If this node has an associated robustXpath, save it alongside the minihashes and shingles.
+            minihash_tuple = None
+            shingle_tuple = None
+            g_nodes = list(G.nodes(data=True))
+            if 'robustXpath' in g_nodes[i][1]:
+                minihash_tuple = (graph_id + "_" + str(i), minhash, node, g_nodes[i][1]['robustXpath'])
+                shingle_tuple = (graph_id + "_" + str(i), wl_shingles[node], g_nodes[i][1]['robustXpath'])
+            else:
+                minihash_tuple = (graph_id + "_" + str(i), minhash, node)
+                shingle_tuple = (graph_id + "_" + str(i), wl_shingles[node])
+
             # Append the computed minhash to a list of minhashes which we're looking to insert into the specified minhashLSH.
-            minhashes.append((graph_id + "_" + str(i), minhash, node))
-            shingle_store.append((graph_id + "_" + str(i), wl_shingles[node]))
+            minhashes.append(minihash_tuple)
+            shingle_store.append(shingle_tuple)
 
     
     # Retrieve the specified LSH
@@ -256,9 +270,16 @@ def clustering(lsh_id):
             cluster_mapping[cluster_id] = []
 
         document_id = document_list[idx][0]
-        cluster_mapping[cluster_id].append(document_id)
+        cluster_item = {
+            'id': document_id
+        }
+        
+        # If this document (node) has an associated robustXpath, include it here.
+        if len(document_list[idx]) == 3:
+            cluster_item['robustXpath'] = document_list[idx][2]
 
-    hyperloglog = lsh_store[lsh_id]['hyperloglog']
+        cluster_mapping[cluster_id].append(cluster_item)
+
 
     minhash_store = lsh_store[lsh_id]['minhashes']
 
