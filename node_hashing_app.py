@@ -34,10 +34,11 @@ def create_lsh():
 
     # Make the MinHashLSH with the given configuration
     lsh = MinHashLSH(threshold=data['threshold'], num_perm=data['num_perm'])
-    hyperloglogplus = HyperLogLogPlusPlus(16)
 
+    
+    lsh_store.clear() # Prevent us from running out of RAM if we're creating a lot of these.
 
-    lsh_store[new_id] = {'config': data, 'lsh': lsh, 'minhashes': {}, 'shingles': [], 'hyperloglog': hyperloglogplus }
+    lsh_store[new_id] = {'config': data, 'lsh': lsh, 'minhashes': {}, 'shingles': []}
     return jsonify({'id': new_id, 'message': 'MinHash LSH created', 'config': lsh_store[new_id]['config']}), 201
 
 
