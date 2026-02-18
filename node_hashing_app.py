@@ -177,6 +177,9 @@ def clustering(lsh_id):
     if lsh_id not in lsh_store:
         abort(404, description='LSH not found')
 
+    eps = float(request.args.get('eps')) or 0.9
+    min_samples = int(request.args.get('min_samples')) or 2
+
     lsh = lsh_store[lsh_id]['lsh']
     documents = lsh_store[lsh_id]['minhashes']
 
@@ -258,7 +261,7 @@ def clustering(lsh_id):
     #np.savetxt(f"{lsh_id}-distance-matrix.csv", distance_matrix, delimiter=",")
 
     #clusters = linkage_based_clustering(distance_matrix, document_labels, lsh_id, approx_num_clusters, document_list)
-    clusters = DBSCAN_based_clustering(distance_matrix)
+    clusters = DBSCAN_based_clustering(distance_matrix, eps, min_samples)
 
     # This isn't really helpful unfortunately.
     #visualize_distance_matrix(distance_matrix, lsh_id)
@@ -306,9 +309,9 @@ def visualize_distance_matrix(distance_matrix, lsh_id):
 
     G.draw(f"{lsh_id}-distances.png", format="png", prog="neato")
 
-def DBSCAN_based_clustering(distance_matrix):
+def DBSCAN_based_clustering(distance_matrix, eps, min_samples):
 
-    clustering = DBSCAN(eps=0.9, min_samples=2, metric='precomputed').fit(distance_matrix)
+    clustering = DBSCAN(eps=eps, min_samples=min_samples, metric='precomputed').fit(distance_matrix)
 
     return clustering.labels_
 
