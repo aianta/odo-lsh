@@ -22,6 +22,17 @@ lsh_store = {}
 graph_uri_map = {}
 HOST_IP = "172.29.64.1"
 
+global_lsh = MinHashLSH(
+    threshold=0.95, num_perm=512, storage_config={
+        'type': 'redis',
+        'basename': b'odobot_global',
+        'redis': {
+            'host': 'localhost',
+            'port': 6379
+        }
+    }
+)
+
 
 @app.route('/minhashLSH', methods=['POST'])
 def create_lsh():
@@ -98,18 +109,18 @@ def update_lsh(lsh_id):
                 minhash.update(shingle.encode('utf-8'))
             
             # If this node has an associated robustXpath, save it alongside the minihashes and shingles.
-            minihash_tuple = None
+            minhash_tuple = None
             shingle_tuple = None
             g_nodes = list(G.nodes(data=True))
             if 'robustXpath' in g_nodes[i][1]:
-                minihash_tuple = (graph_id + "_" + str(i), minhash, node, g_nodes[i][1]['robustXpath'])
+                minhash_tuple = (graph_id + "_" + str(i), minhash, node, g_nodes[i][1]['robustXpath'])
                 shingle_tuple = (graph_id + "_" + str(i), wl_shingles[node], g_nodes[i][1]['robustXpath'])
             else:
-                minihash_tuple = (graph_id + "_" + str(i), minhash, node)
+                minhash_tuple = (graph_id + "_" + str(i), minhash, node)
                 shingle_tuple = (graph_id + "_" + str(i), wl_shingles[node])
 
             # Append the computed minhash to a list of minhashes which we're looking to insert into the specified minhashLSH.
-            minhashes.append(minihash_tuple)
+            minhashes.append(minhash_tuple)
             shingle_store.append(shingle_tuple)
 
     
@@ -171,6 +182,128 @@ def query_minhash(lsh_id):
         #return jsonify({'id': lsh_id, 'query': query, 'results': [], 'message': 'Query endpoint stub'}), 200
     except Exception as e:
         print(e)
+
+'''
+Route for querying the persistent redis store for cluster matches.
+'''
+@app.route('/minhashLSH/query', methods=['POST'])
+def query():
+
+    data = request.get_json() or {}
+
+    print(f"request:\n{data}")
+
+    query_result = []
+
+    wl_iterations = request.args.get('wl_iterations') or 16
+    wl_digest_size = request.args.get('wl_digest_size') or 16
+    minhash_perm = request.args.get('minhash_perm') or 256
+
+    wl_digest_size = int(wl_digest_size)
+    wl_iterations = int(wl_iterations)
+    minhash_perm = int(minhash_perm)
+
+    for node in data['nodes']: # deal with any odd characters like \xa0 in the color labels.
+        node['color'] = node['color'].encode('utf-8') 
+
+    print(f"Computing wl-shingles for the submitted query document")
+    G = nx.node_link_graph(data, edges="links", directed=True, multigraph=False)
+
+    wl_shingles = nx.weisfeiler_lehman_subgraph_hashes(G, iterations=wl_iterations, digest_size=wl_digest_size, node_attr="color", include_initial_labels=True)
+
+    # We're only interested in matches against these nodes
+    for node_id in data['queryNodes']:
+        matches = {
+            'nodeId': node_id,
+            'matches': []
+        }
+
+        # Compute a minhash for the query node
+        query_minhash = MinHash(num_perm=minhash_perm)
+        
+        #print(f"wl_shingles:\n{wl_shingles}")
+
+        for shingle in wl_shingles[str(node_id)]:
+            query_minhash.update(shingle.encode('utf-8'))
+        
+        result = global_lsh.query(query_minhash)
+        print(f"query result:\n{result}")
+        
+        for match in result:
+            matches['matches'].append(match)
+        
+        query_result.append(matches)
+
+        data['query_results'] = query_result
+        print(f"data: \n{data}")
+
+        if 'nodes' in data:
+            del data['nodes']
+        if 'links' in data:
+            del data['links']
+
+    return jsonify(data), 200
+
+
+'''
+Route for registering fingerprints in the persistent redis store.
+'''
+@app.route('/minhashLSH/<lsh_id>/fingerprints', methods=['POST'])
+def fingerprints(lsh_id):
+    if lsh_id not in lsh_store:
+        abort(404, description='LSH not found')
+
+    data = request.get_json() or {}
+
+    minhashes = lsh_store[lsh_id]['minhashes']
+
+    '''
+    snapshotId
+    clusterId
+    parentXpath
+    parentHTML
+    parentIndex
+    parentId
+    items:[
+        snapshotId
+        clusterId
+        nodeId
+        fullNodeId
+        robustXpath
+        html
+    ]
+
+    '''
+
+    print(f"data:\n{data}")
+
+    for candidate in data:
+
+        with global_lsh.insertion_session() as session:
+            
+            for cluster_item in candidate['items']:
+                
+                node_id = cluster_item['fullNodeId']
+
+                '''
+                node_id = <snapshotId>_<node_index>
+                '''
+                print(f"Looking {node_id} in minhashes")
+                #for item in minhashes:
+                    #print(f"{item[0]}")
+                minhash = minhashes[node_id]
+                cluster_item['parentIndex'] = candidate['parentIndex']
+                cluster_item['parentId'] = candidate['parentId']
+                cluster_item['parentXpath'] = candidate['parentXpath']
+                
+
+                print(f"Saving {cluster_item} in global LSH")
+        
+                session.insert(cluster_item, minhash)
+
+    
+    return jsonify(data), 200
+
 
 
 
